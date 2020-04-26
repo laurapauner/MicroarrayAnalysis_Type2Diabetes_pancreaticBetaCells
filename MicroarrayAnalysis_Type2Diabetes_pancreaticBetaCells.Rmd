@@ -1,0 +1,673 @@
+---
+title: "Análisis de Microarrays"
+author: "Laura Pauner"
+date: "4/9/2020"
+output:
+  word_document: default
+  html_document: default
+---
+
+
+**INTRODUCCIÓN**
+
+El protocolo que se describe a continuación utiliza los datos cargados en la base de datos de expresión génica Omnibus (GEO) con número de identificación: GSE20966.
+
+Para realizar el estudio, descargo los datos directamente utilizando el paquete '*GEOquery*'. Se obtiene un objeto de tipo *ExpressionSet* que es el que voy a utilizar en el análisis. 
+
+Además, guardo los archivos tipo CEL en la carpeta '*Datos*' creada.
+
+
+```{r}
+require(GEOquery)
+```
+
+```{r}
+gse<-getGEO("GSE20966", GSEMatrix = TRUE)
+```
+
+```{r}
+length(gse)
+```
+
+El objeto obtenido es una lista con un único elemento; por tanto es necesario obtener el elemento al que denomino '*rawData*': 
+
+```{r}
+rawData<-gse[[1]]
+class(rawData)
+```
+
+```{r}
+show(rawData)
+```
+
+
+**DATOS**
+
+Para realizar el estudio se han obtenido 20 muestras de células beta pancreáticas de las cuales 10 corresponden a individuos con Diabetes de Tipo II (T2D) y otras 10 corresponden a individuos sanos (control).
+
+Por lo tanto hay dos grupos diferenciados de muestras, uno correspondiente a individuos enfermos y otro a individuos control.
+
+Las muestras GSM524151 a GSM524160 pertenecen al grupo de individuos control, y las muestras GSM524161 a GSM524170 al grupo de individuos con T2D.
+
+Añado dos nuevas covariables a los datos para tener nombres más sencillos para las muestras ('c' equivale a control y 'd' a diabetes).
+
+```{r}
+shortName<-c("c.M1","c.M2","c.M3","c.M4","c.M5","c.M6","c.M7","c.M8","c.M9","c.M10","d.M11","d.M12","d.M13","d.M14","d.M15","d.M16","d.M17","d.M18","d.M19","d.M20")
+```
+
+```{r}
+Group<-c("control","control","control","control","control","control","control","control","control","control","diabetes","diabetes","diabetes","diabetes","diabetes","diabetes","diabetes","diabetes","diabetes","diabetes")
+```
+
+```{r}
+rawData$shortName<-shortName
+rawData$Group<-Group
+```
+
+Cambio los nombres de las muestras por los nombres cortos generados anteriormente.
+
+```{r}
+rownames(pData(rawData))<-rawData$shortName
+colnames(rawData)<-rownames(pData(rawData))
+sampleNames(rawData)
+```
+
+
+
+**CONTROL DE CALIDAD DE LOS DATOS CRUDOS**
+
+Se trata de un primer control para comprobar si los datos sin procesar tienen suficiente calidad para su posterior normalización.
+
+Para ello utilizo el paquete '*ArrayQualityMetrics*':
+
+```{r}
+library(arrayQualityMetrics)
+```
+
+```{r}
+arrayQualityMetrics(rawData)
+```
+
+Los resultados del control de calidad se guardan en la carpeta '*arrayQualityMetrics report for rawData*'.
+
+Dentro de esta carpeta hay un archivo denominado '*index.html*' que conduce a una página web que contiene un resumen del control de calidad realizado.
+
+En primer lugar hay una tabla que contiene una descripción general de los metadatos (información sobre las covariables) que permite la detección de valores atípicos.
+Los valores atípicos se señalan con asteriscos. Un único asterisco indica que los problemas potenciales son pequeños y la muestra puede mantenerse en el estudio. Si hubiera 3 asteriscos, sería mejor eliminar las muestras señaladas.
+
+Para la detección de valores atípicos se han utilizado 3 métodos:
+- Distancia entre matrices
+- Boxplots
+- Parcelas MA
+
+El resto del archivo index.html muestra los resultados obtenidos mediante estos 3 métodos de detección de outliers.
+
+En este caso hay 3 muestras marcadas, la 3, la 5 y la 8, con un único asterisco.
+
+Por tanto decido no eliminarlas del análisis.
+
+
+
+Es interesante realizar un análisis de componentes principales (PCA) para detectar si las muestras se agrupan de forma natural o no.
+
+Para ello utilizo los paquetes '*ggplot2*' y '*ggrepel*'.
+
+```{r}
+library(ggplot2)
+library(ggrepel)
+```
+
+```{r}
+plotPCA3<-function(datos, labels, factor, title, scale, colores, size = 1.5, glineas = 0.25){
+  data<-prcomp(t(datos),scale = scale)
+  
+  #Ajustes del gráfico
+  dataDf<-data.frame(data$x)
+  Group<-factor
+  loads<-round(data$sdev^2/sum(data$sdev^2)*100,1)
+  
+  #Gráfico
+  p1<-ggplot(dataDf, aes(x=PC1, y=PC2))+
+    theme_classic()+
+    geom_hline(yintercept = 0, color="gray")+
+    geom_vline(xintercept = 0, color="gray")+
+    geom_point(aes(color=Group), alpha=0.55, size=2)+
+    coord_cartesian(xlim = c(min(data$x[,1])-5, max(data$x[,1])+5))+
+    scale_fill_discrete(name="Group")
+  
+  #Evitamos la superposición de etiquetas
+  p1 + geom_text_repel(aes(y=PC2+0.25, label=labels),segment.size = 0.25, size=size)+
+    labs(x=c(paste("PC1",loads[1],"%")), y=c(paste("PC2",loads[2],"%")))+
+    ggtitle(paste("PCA for: ",title, sep = " "))+
+    theme(plot.title = element_text(hjust = 0.5), axis.text.x = element_text(angle = 90))+
+    scale_color_manual(values = colores)
+}
+```
+
+
+```{r}
+plotPCA3(exprs(rawData), labels = rawData$shortName, factor = rawData$Group, title = "Raw Data", scale = FALSE, size = 2, colores = c("coral1", "royalblue1"))
+```
+
+El primer componente del análisis de componentes principales representa el 100% de la variablilidad de las muestras. Se puede ver en el gráfico que las muestras se agrupan en general por su condición de control o de diabetes.
+
+
+Guardo el gráfico de PCA en la carpeta 'Figures':
+
+```{r}
+png("Figures/PCAforRawData.png",
+    width=1200,height=820,units="px",
+    pointsize=12,bg="white",res=300)
+plotPCA3(exprs(rawData), labels = rawData$shortName, factor = rawData$Group, title = "Raw Data", scale = FALSE, size = 2, colores = c("coral1", "royalblue1"))
+dev.off()
+```
+
+
+
+Para visualizar la distribución de intensidad de las matrices genero un diagrama de caja múltiple:
+
+```{r}
+boxplot(rawData, cex.axis=0.5, las=2, which="all", col=c(rep("coral1",10), rep("royalblue1",10)), main="Distribution of raw intensity values")
+```
+
+Las cajas de todas las muestras son similares.
+
+Guardo el gráfico de caja en la carpeta 'Figures':
+
+```{r}
+png("Figures/DistributionOfRawIntensityValues.png",
+    width=1200,height=820,units="px",
+    pointsize=12,bg="white",res=300)
+boxplot(rawData, cex.axis=0.5, las=2, which="all", col=c(rep("coral1",10), rep("royalblue1",10)), main="Distribution of raw intensity values")
+dev.off()
+```
+
+
+La muestra control 5 tiene un comportamiento distinto al del resto; la elimino del expressionSet y repito los gráficos para ver si se observa alguna diferencia.
+
+```{r}
+rawDataSinC.M5<-rawData[,rawData$shortName != "c.M5"]
+rawDataSinC.M5
+```
+
+```{r}
+plotPCA3(exprs(rawDataSinC.M5), labels = rawDataSinC.M5$shortName, factor = rawDataSinC.M5$Group, title = "Raw Data Sin control M5", scale = FALSE, size = 2, colores = c("coral1", "royalblue1"))
+```
+
+```{r}
+boxplot(rawDataSinC.M5, cex.axis=0.5, las=2, which="all", col=c(rep("coral1",10), rep("royalblue1",10)), main="Distribution of raw intensity values without control M5")
+```
+
+Los análisis de componentes PC1 y PC2 siguen representando el mismo porcentaje de variabilidad. Se observa alguna de las muestras algo desplazada en el gráfico respecto al anterior. 
+En cuanto al boxplot no se observan grandes cambios.
+
+Por tanto, como según el control de calidad realizado mediante '*arrayQualityMetrics*' no hay motivo para eliminar ninguna de las matrices del experimento ya que ninguna afecta de forma significativa a la calidad general del mismo, continuo el proceso con todas ellas.
+
+
+
+**NORMALIZACIÓN DE LOS DATOS CRUDOS**
+
+Para la normalización de los datos utilizo el análisis robusto de múltiples chips o RMA.
+
+Utilizo el paquete '*affy*':
+
+```{r}
+library(affy)
+eset_rma<-justRMA()
+```
+
+```{r}
+class(eset_rma)
+```
+
+Guardo el expressionSet obtenido en un archivo de tipo '*txt*' al que denomino '*normalizedData*' en la carpeta de 'Resultados':
+
+```{r}
+write.exprs(eset_rma, file="./MicroarraysAnalysis/Resultados/normalizedData.txt")
+```
+
+
+
+**CONTROL DE CALIDAD DE LOS DATOS NORMALIZADOS**
+
+Llevo a cabo de nuevo el control de calidad pero esta vez de los datos normalizados; utilizo tal y como he hecho anteriormente, el paquete '*arrayQualityMetrics*'.
+
+```{r}
+library(arrayQualityMetrics)
+arrayQualityMetrics(eset_rma)
+```
+
+Los resultados del análisis realizado se ha guardado en la carpeta '*arrayQualityMetrics report for eset_rma*'.
+
+Dentro de esta carpeta hay un archivo denominado '*index.html*' que conduce a una página web que contiene un resumen del control de calidad realizado. En este caso, ninguna de las muestras aparece señalizada.
+
+Obtengo los gráficos:
+
+```{r}
+plotPCA3(exprs(eset_rma), labels = rawData$shortName, factor = rawData$Group, title = "Normalized Data", scale = FALSE, size = 2, colores = c("coral1", "royalblue1"))
+```
+
+Con los datos normalizados, el primer componente representa el 36.2% de la variabilidad total, que es mucho menor que antes.
+
+Me llama la atención que aparezcan dos grupos bastante diferenciados. En la información del ExpressionSet, no encuentro ninguna diferenciación de las muestras salvo por la condición de control o diabetes tipo II. 
+Sin embargo, al leer el artículo publicado, veo que sí remarcan una diferenciación entre muestras basada en que parte de ellas ha sido analizada en el Genomic Core del Centro de Diabetes Joslin (12) y otra en el Genomic Core del Hospital General de Massachusetts (8). 
+
+Guardo el gráfico de PCA de los datos normalizados en la carpeta 'Figures':
+
+```{r}
+png("Figures/PCAforNormalizedData.png",
+    width=1200,height=820,units="px",
+    pointsize=12,bg="white",res=300)
+plotPCA3(exprs(eset_rma), labels = rawData$shortName, factor = rawData$Group, title = "Normalized Data", scale = FALSE, size = 2, colores = c("coral1", "royalblue1"))
+dev.off()
+```
+
+
+
+```{r}
+boxplot(eset_rma, cex.axis=0.5, las=2, which="all", col=c(rep("coral1",10), rep("royalblue1",10)), names = rawData$shortName, main="Boxplot for arrays intensity: Normalized Data")
+```
+
+La intensidad de las matrices es muy similar.
+
+Guardo el gráfico de cajas en la carpeta 'Figures':
+
+```{r}
+png("Figures/DistributionOfNormalizedDataIntensityValues.png",
+    width=1200,height=820,units="px",
+    pointsize=12,bg="white",res=300)
+boxplot(eset_rma, cex.axis=0.5, las=2, which="all", col=c(rep("coral1",10), rep("royalblue1",10)), names = rawData$shortName, main="Boxplot for arrays intensity: Normalized Data")
+dev.off()
+```
+
+
+**DETECCIÓN DE LOS GENES MÁS VARIABLES**
+
+En este paso del análisis voy a estimar la variabilidad general de todos los genes para ver qué genes muestran un variabilidad mayor.
+
+Para ello calculo la desviación estándar y muestro los reslutados en un gráfico de puntos:
+
+```{r}
+sds<-apply(exprs(eset_rma),1,sd)
+sdsOrd<-sort(sds)
+plot(1:length(sdsOrd), sdsOrd, main = "Distribution of variability for all genes", col = "darkorchid1", sub = "Vertical lines represent 90% and 95% percentiles", xlab = "Gene index (from least to most variable)", ylab = "Standard deviation")
+abline(v = length(sds)*c(0.9, 0.95), col = "navy")
+```
+
+El gráfico anterior muestra la desviación estándar de todos los genes ordenados de menor a mayor variabilidad. Los genes que superan las lineas verticales correspondientes a los percentiles 90-95% son los genes con una desviación estándar superior al resto y los genes más variables.
+
+Guardo el gráfico en la carpeta 'Figures':
+
+```{r}
+png("Figures/DistributionOfVariabilityForAllGenes.png",
+    width=1200,height=820,units="px",
+    pointsize=12,bg="white",res=300)
+plot(1:length(sdsOrd), sdsOrd, main = "Distribution of variability for all genes", col = "darkorchid1", sub = "Vertical lines represent 90% and 95% percentiles", xlab = "Gene index (from least to most variable)", ylab = "Standard deviation")
+abline(v = length(sds)*c(0.9, 0.95), col = "navy")
+dev.off()
+```
+
+
+**FILTRADO DE LOS GENES MENOS VARIABLES**
+
+Los genes menos variables son aquellos cuya variabilidad se puede atribuir a razones distintas a la biológica y por tanto no se espera que se expresen diferencialmente. Por eso es útil filtrarlos para quedarnos con los genes más variables.
+
+En primer lugar necesito saber qué paquete de anotación debo utilizar según el chip con el que se ha realizado el experimento. El chip es: '*GPL1352	[U133_X3P] Affymetrix Human X3P Array*'. Buscando el chip en la página web de bioconductor encuentro el paquete de anotación adecuado.
+
+Voy a utilizar los paquetes '*genefilter*' y '*u133x3p.db*':
+
+```{r}
+BiocManager::install("genefilter")
+```
+
+```{r}
+if (!requireNamespace("BiocManager", quietly = TRUE))
+    install.packages("BiocManager")
+
+BiocManager::install("u133x3p.db")
+```
+
+```{r}
+library(genefilter)
+library(u133x3p.db)
+```
+
+```{r}
+annotation(eset_rma)<-"u133x3p.db"
+filtered<-nsFilter(eset_rma, require.entrez = TRUE, remove.dupEntrez = TRUE, var.filter = TRUE, var.func = IQR, var.cutoff = 0.75, filterByQuantile = TRUE, feature.exclude = "^AFFX")
+```
+
+
+El informe de los resultados del filtrado es el siguiente:
+
+```{r}
+print(filtered$filter.log)
+```
+
+
+Guardo los genes restantes en la variable '*eset_filtered*'
+
+```{r}
+eset_filtered<-filtered$eset
+eset_filtered
+```
+
+Guardo los datos normalizados y los datos filtrados normalizados en la carpeta 'Resultados':
+
+```{r}
+write.csv(exprs(eset_rma), file = "./MicroarraysAnalysis/Resultados/normalizedData.csv")
+```
+```{r}
+write.csv(exprs(eset_filtered), file = "./MicroarraysAnalysis/Resultados/normalizedFilteredData.csv")
+```
+```{r}
+save(eset_rma, eset_filtered, file = "./MicroarraysAnalysis/Resultados/normalizedData.Rda")
+```
+
+
+
+**MATRIZ DE DISEÑO**
+
+Para ver qué genes se expresan diferencialmente se realiza una prueba estadística que nos permita comparar la expresión de los genes entre grupos. Existen pruebas estadísticas desarrolladas para el análisis de Microarrays, entre ellas el método '*Linear Models for Microarrays*'. 
+
+Para ello necesito el paquete '*limma*'.
+
+El primer paso del método es la creación de la matriz de diseño:
+
+```{r}
+library(limma)
+```
+
+```{r}
+if(!exists("eset_filtered"))load(file = "./MicroarraysAnalysis/Resultados/normalizedData.Rda")
+designMatrix<-model.matrix(~ 0 + Group, pData(eset_filtered))
+```
+```{r}
+colnames(designMatrix)<-c("control", "diabetes")
+rownames(designMatrix)<-rawData$shortName
+print(designMatrix)
+```
+
+La matriz de diseño contiene las muestras en las filas y las condiciones experimentales en las columnas. La fila presenta el valor 1 en la columna del grupo al que pertenece esa muestra.
+
+
+
+**MATRIZ DE CONTRASTES**
+
+La matriz de contrastes es una forma de reflejar las comparaciones entre grupos. En este caso, como sólo hay dos grupos, voy a realizar una única comparación:
+
+```{r}
+cont.matrix<-makeContrasts(ControlvsDiabetes = control - diabetes, levels = designMatrix)
+cont.matrix
+```
+
+En el estudio hay únicamente dos grupos por lo que la matriz de contrastes posee sólo dos filas, correspondientes a los grupos, y una columna, correspondiente a la comparación realizada. La comparación está representada por un 1 y un -1 en las filas de los grupos que se están comparando.
+
+
+
+**SELECCIÓN DE GENES DIFERENCIALMENTE EXPRESADOS**
+
+A continuación evalúo para cada gen si se expresa diferencialmente o no. Para ello utilizo el paquete '*limma*' que estima el modelo, los contrastes y realiza las pruebas de significación que permitirán decidir qué genes se expresan diferencialmente. El análisis proporciona los p-valores que permitirán ordenar a los genes de mayor a menor expresión diferencial. Los p-valores se ajustan mediante el método de Benjamini y Hochberg para controlar el número de falsos positivos.
+
+```{r}
+library(limma)
+fit<-lmFit(eset_filtered, designMatrix)
+fit.main<-contrasts.fit(fit, cont.matrix)
+fit.main<-eBayes(fit.main)
+```
+
+Se obtiene un objeto de tipo '*MArrayLM*':
+
+```{r}
+class(fit.main)
+```
+
+
+Para obtener la lista de los genes diferencialmente expresados utilizo la función '*topTable*' del paquete '*limma*'. Ordena los genes de menor a mayor p-valor o lo que es lo mismo, de mayor a menor expresión diferencial:
+
+```{r}
+topTab_ControlvsDiabetes<-topTable(fit.main, number = nrow(fit.main), coef = "ControlvsDiabetes", adjust = "fdr")
+head(topTab_ControlvsDiabetes)
+```
+
+En las filas de la tabla están los genes y en las columnas, diferentes estadísticos para cada uno de ellos:
+
+- *logFC*: diferencia media entre grupos
+- *AveExpr*: expresión promedio de todos los genes
+- *t*: estadística t moderada
+- *P.Value*: p-valor
+- *adj.P.Val*: p-valor ajustado según Benjamini y Hochberg
+- *B*: estadística B (log del ratio de probabilidades del gen de expresarse diferencialmente vs no hacerlo)
+
+
+
+**ANOTACIÓN GÉNICA**
+
+En la TopTable anteriormente generada en cada fila aparece el ID del fabricante para cada conjunto de sondas. La anotación génica me permite averiguar a qué gen corresponde cada ID para facilitar la interpretación de los resultados. Es posible relacionar el ID con el símbolo del gen, el identificador Entrez del gen o la descripción del gen.
+
+Para ello genero una función denominada '*annotatedTopTable*':
+
+```{r}
+annotatedTopTable<-function(topTab, annotationPack){
+  topTab<-cbind(PROBEID = rownames(topTab), topTab)
+  myProbes<-rownames(topTab)
+  package<-eval(parse(text = annotationPack))
+  geneAnnots<-select(package, myProbes, c("SYMBOL", "ENTREZID", "GENENAME"))
+  annotatedTopTab<-merge(x=geneAnnots, y=topTab, by.x="PROBEID", by.y="PROBEID")
+  
+return(annotatedTopTab)
+}
+```
+
+```{r}
+library("u133x3p.db")
+```
+
+```{r}
+topAnnotated_ControlvsDiabetes<-annotatedTopTable(topTab_ControlvsDiabetes, annotationPack = "u133x3p.db")
+head(topAnnotated_ControlvsDiabetes)
+```
+
+
+Guardo los resultados de la anotación génica en un archivo '*csv*' dentro de la carpeta 'Resultados':
+
+```{r}
+write.csv(topAnnotated_ControlvsDiabetes, file = "./MicroarraysAnalysis/Resultados/topAnnotated_ControlvsDiabetes.csv")
+```
+
+
+La expresión diferencial de los genes puede visualizarse utilizando un gráfico de tipo volcán:
+
+```{r}
+geneSymbols<-select(u133x3p.db, rownames(fit.main), c("SYMBOL"))
+SYMBOLS<-geneSymbols$SYMBOL
+volcanoplot(fit.main, col = "darkmagenta", coef = 1, highlight = 8, names = SYMBOLS, main = paste("Differentially expressed genes", colnames(cont.matrix)[1], sep = "\n"))
+abline(v=c(-1,1))
+```
+
+El gráfico representa en abcisas los cambios de expresión en escala logarítmica, que equivalen al efecto biológico, y en ordenadas el logaritmo negativo del p-valor, que equivale al efecto estadístico.
+
+Cuanto más hacia arriba y hacia afuera de la figura esté un gen, mayor es su expresión diferencial.
+
+Guardo el gráfico (volcanoPlot) obtenido en la carpeta 'Figures':
+
+```{r}
+png("Figures/volcanoPlot.png",
+    width=1200,height=820,units="px",
+    pointsize=12,bg="white",res=300)
+volcanoplot(fit.main, col = "darkmagenta", coef = 1, highlight = 8, names = SYMBOLS, main = paste("Differentially expressed genes", colnames(cont.matrix)[1], sep = "\n"))
+abline(v=c(-1,1))
+dev.off()
+```
+
+
+
+Otra forma de visualizar los genes que se expresan diferencialmente es mediante mapas de calor. Estos gráficos usan paletas de colores para resaltar valores distintos, por ejemplo, regulación positiva o negativa.
+
+```{r}
+library(limma)
+res<-decideTests(fit.main, method = "separate", adjust.method = "fdr", p.value = 0.1, lfc = 1)
+sum.res.rows<-apply(abs(res), 1, sum)
+res.selected<-res[sum.res.rows!=0,]
+print(summary(res))
+```
+
+
+En este caso los genes con una diferencia no significativa son 4973, los genes con una sobreregulación significativa son 18 y los genes con baja regulación son 38.
+
+
+```{r}
+probesInHeatMap<-rownames(res.selected)
+HMdata<-exprs(eset_filtered)[rownames(exprs(eset_filtered)) %in% probesInHeatMap,]
+geneSymbols<-select(u133x3p.db, rownames(HMdata), c("SYMBOL"))
+SYMBOLS<-geneSymbols$SYMBOL
+rownames(HMdata)<-SYMBOLS
+```
+
+
+Guardo los datos de HMdata en un archivo '*csv*' en la carpeta 'Resultados':
+
+```{r}
+write.csv(HMdata, file = "./MicroarraysAnalysis/Resultados/data4heatmap.csv")
+```
+
+
+Para visualizar el mapa de calor realizo un agrupamiento jerárquico de los genes y las muestras para encontrar patrones comunes de variación.
+
+
+```{r}
+library(gplots)
+heatmap.2(HMdata, 
+          Rowv = TRUE, 
+          Colv = TRUE, 
+          main = "Differentially expressed genes \n FDR < 0.1, logFC>=1", 
+          scale = "row", 
+          col = colorRampPalette(c("orchid","blue"))(n=300), 
+          sepcolor = "white", 
+          sepwidth = c(0.05,0.05), 
+          cexRow = 0.7, 
+          cexCol = 0.7, 
+          key = TRUE, 
+          keysize = 2, 
+          density.info = "histogram", 
+          ColSideColors = c(rep("coral1",10), rep("lightseagreen",10)), 
+          tracecol = NULL, 
+          srtCol = 30)
+```
+
+
+En la parte superior del gráfico están las 20 muestras divididas por grupos (control y diabetes) y en la parte izquierda los genes diferencialmente expresados agrupados por su similitud.
+
+
+Guardo el mapa de calor en la carpeta 'Figures':
+
+```{r}
+png("Figures/HeatMap.png",
+    width=1200,height=820,units="px",
+    pointsize=6,bg="white",res=300)
+heatmap.2(HMdata, Rowv = TRUE, Colv = TRUE, main = "Differentially expressed genes \n FDR < 0.1, logFC>=1", scale = "row", col = colorRampPalette(c("orchid","blue"))(n=300), sepcolor = "white", sepwidth = c(0.05,0.05), cexRow = 0.7, cexCol = 0.7, key = TRUE, keysize = 2, density.info = "histogram", ColSideColors = c(rep("coral1",10), rep("lightseagreen",10)), tracecol = NULL, srtCol = 30)
+dev.off()
+```
+
+
+
+**SIGNIFICADO BIOLÓGICO**
+
+Una vez se ha obtenido la lista de genes diferencialmente expresados el último paso es la interpretación de los resultados. Para ello se realiza un enfoque estadístico denominado Análisis del conjunto de genes. Aunque hay muchas variantes, la que voy a utilizar es el Análisis de Enriquecimiento Básico.
+
+Para ello necesito el paquete '*Reactome*' de '*Bioconductor*'.
+
+En primer lugar guardo los genes que se van a analizar en una variable:
+
+```{r}
+topTab<-topTab_ControlvsDiabetes
+whichGenes<-topTab["adj.P.Val"]<0.15
+selectedIDs<-rownames(topTab)[whichGenes]
+EntrezIDs<-select(u133x3p.db, selectedIDs, c("ENTREZID"))
+EntrezIDs<-EntrezIDs$ENTREZID
+SelectedGenes<-EntrezIDs
+
+length(SelectedGenes)
+```
+
+El número de genes seleccionados es 72. 
+
+
+Sin embargo, los análisis de este tipo necesitan un número mínimo de genes. Por tanto, voy a analizar todos los genes que tienen al menos una anotación en Gene Ontology.
+Para ello realizo la asignación entre los identificadores Entrez de los genes y los identificadores GO y los utilizados por KEGG:
+
+Utilizo el paquete '*org.Hs.eg.db*' que es un paquete de anotación específico para cada organismo, en este caso el humano:
+
+```{r}
+BiocManager::install("org.Hs.eg.db")
+```
+
+```{r}
+mapped_genes2GO<-mappedkeys(org.Hs.egGO)
+mapped_genes2KEGG<-mappedkeys(org.Hs.egPATH)
+mapped_genes<-union(mapped_genes2GO, mapped_genes2KEGG)
+```
+
+
+```{r}
+BiocManager::install("ReactomePA")
+```
+
+```{r}
+BiocManager::install("DO.db")
+```
+
+```{r}
+library(ReactomePA)
+```
+
+```{r}
+universe<-mapped_genes
+
+genesIN<-SelectedGenes
+comparison<-"ControlvsDiabetes"
+enrich.result<-enrichPathway(gene=genesIN, pvalueCutoff = 0.05, readable = T, pAdjustMethod = "BH", organism = "human", universe = universe)
+  
+cat("##################################")
+cat("\nComparison: ", comparison,"\n")
+print(head(enrich.result))
+  
+if(length(rownames(enrich.result@result)) != 0){
+  write.csv(as.data.frame(enrich.result), file = paste0("./MicroarraysAnalysis/Resultados/","ReactomePA.Results.",comparison,".csv"), row.names = FALSE)
+  pdf(file = paste0("./MicroarraysAnalysis/Resultados/","ReactomePABarplot.",comparison,".pdf"))
+  print(barplot(enrich.result, showCategory=15, font.size=4, title=paste0("Reactome Pathways Analysis for",comparison,".Barplot")))
+  dev.off()
+    
+  pdf(file = paste0("./MicroarraysAnalysis/Resultados/","ReactomePAcnetplot.",comparison,".pdf"))
+  print(cnetplot(enrich.result, categorySize="geneNum", showCategory = 15, vertex.label.cex=0.75))
+  dev.off()
+  }
+```
+
+
+Guardo el 'barplot' y el 'cnetplot' en la carpeta 'Figures':
+
+```{r}
+png("Figures/ReactomePABarplot.png",
+    width=1200,height=820,units="px",
+    pointsize=12,bg="white",res=300)
+barplot(enrich.result, showCategory=15, font.size=4, title=paste0("Reactome PA for \n",comparison,".barplot"))
+dev.off()
+```
+
+```{r}
+png("Figures/ReactomePACnetplot.png",
+    width=1200,height=820,units="px",
+    pointsize=12,bg="white",res=300)
+cnetplot(enrich.result, categorySize="geneNum", showCategory = 15, vertex.label.cex=0.75)
+dev.off()
+```
+
+
+
+Tras el análisis de enriquecimiento básico se obtiene una única vía enriquecida con 3 genes involucrados: 
+
+PNLIPRP1
+SLC2A2
+CLPS
+
